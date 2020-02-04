@@ -2,45 +2,39 @@
 import * as vscode from 'vscode';
 
 // vscode-test-adapter imports
-import {
-	TestAdapter,
-	TestLoadStartedEvent,
-	TestLoadFinishedEvent,
-	TestRunStartedEvent,
-	TestRunFinishedEvent,
-	TestSuiteEvent,
-	TestEvent
-} from 'vscode-test-adapter-api';
+import { TestAdapter } from 'vscode-test-adapter-api';
 
 import { Log } from 'vscode-test-adapter-util';
 
 // derivitec imports
 import { TestDiscovery } from "./testDiscovery"
 import { TestRunner } from "./testRunner"
+import OutputManager from './OutputManager';
+import CodeLensProcessor from './CodeLensProcessor';
+import TestExplorer from './TestExplorer';
 
 export class DotnetAdapter implements TestAdapter {
 
 	private disposables: { dispose(): void }[] = [];
 
+	private codeLensProcessor?: CodeLensProcessor;
+
+	private readonly outputManager: OutputManager;
+
 	private readonly testDiscovery: TestDiscovery;
 
 	private readonly testRunner: TestRunner;
 
-	private readonly testsEmitter =
-	    new vscode.EventEmitter<TestLoadStartedEvent | TestLoadFinishedEvent>();
-	private readonly testStatesEmitter = new vscode.EventEmitter<TestRunStartedEvent |
-	    TestRunFinishedEvent | TestSuiteEvent | TestEvent>();
-	private readonly autorunEmitter = new vscode.EventEmitter<void>();
+	private readonly testExplorer = new TestExplorer();
 
-	get tests(): vscode.Event<TestLoadStartedEvent | TestLoadFinishedEvent> {
-		return this.testsEmitter.event;
+	get tests() {
+		return this.testExplorer.tests;
 	}
-	get testStates(): vscode.Event<TestRunStartedEvent | TestRunFinishedEvent |
-		TestSuiteEvent | TestEvent> {
-		return this.testStatesEmitter.event;
+	get testStates() {
+		return this.testExplorer.testStates;
 	}
-	get autorun(): vscode.Event<void> | undefined {
-		return this.autorunEmitter.event;
+	get autorun() {
+		return this.testExplorer.autorun;
 	}
 
 	constructor(
@@ -51,9 +45,13 @@ export class DotnetAdapter implements TestAdapter {
 		this.log.info('Initializing .Net Core adapter');
 		this.log.info('');
 
+		this.outputManager = new OutputManager(
+			this.outputchannel,
+		);
+
 		this.testDiscovery = new TestDiscovery(
 			this.workspace,
-			this.outputchannel,
+			this.outputManager,
 			this.log
 		);
 
@@ -62,12 +60,10 @@ export class DotnetAdapter implements TestAdapter {
 			this.outputchannel,
 			this.log,
 			this.testDiscovery,
-			this.testStatesEmitter
+			this.testExplorer
 		);
 
-		this.disposables.push(this.testsEmitter);
-		this.disposables.push(this.testStatesEmitter);
-		this.disposables.push(this.autorunEmitter);
+		this.disposables.push(this.testExplorer);
 		this.disposables.push(
 			vscode.workspace.onDidChangeConfiguration(configChange => {
 
@@ -83,29 +79,27 @@ export class DotnetAdapter implements TestAdapter {
 	}
 
 	async load(): Promise<void> {
-		this.testsEmitter.fire(<TestLoadStartedEvent>{ type: 'started' });
-
-		const finishedEvent: TestLoadFinishedEvent = { type: 'finished' }
+		const finish = this.testExplorer.load();
 
 		try {
-			finishedEvent.suite = await this.testDiscovery.Load();
+			const suite = await this.testDiscovery.Load();
+			finish.pass(suite);
+			this.codeLensProcessor = new CodeLensProcessor(this.outputManager, this.testExplorer, suite);
 		} catch (error) {
-			finishedEvent.errorMessage = error;
+			finish.fail(error);
 		}
-
-		this.testsEmitter.fire(finishedEvent);
 	}
 
 	async run(tests: string[]): Promise<void> {
-		this.testStatesEmitter.fire(<TestRunStartedEvent>{ type: 'started', tests });
-		this.testRunner.Run(tests);
-		this.testStatesEmitter.fire(<TestRunFinishedEvent>{ type: 'finished' });
+		const finish = this.testExplorer.run(tests);
+		await this.testRunner.Run(tests);
+		finish();
 	}
 
 	async debug(tests: string[]): Promise<void> {
-		this.testStatesEmitter.fire(<TestRunStartedEvent>{ type: 'started', tests });
-		this.testRunner.Debug(tests);
-		this.testStatesEmitter.fire(<TestRunFinishedEvent>{ type: 'finished' });
+		const finish = this.testExplorer.run(tests);
+		await this.testRunner.Debug(tests);
+		finish();
 	}
 
 	cancel(): void {
@@ -114,6 +108,7 @@ export class DotnetAdapter implements TestAdapter {
 
 	dispose(): void {
 		this.testRunner.Cancel();
+		if (this.codeLensProcessor) this.codeLensProcessor.dispose();
 		for (const disposable of this.disposables) {
 			disposable.dispose();
 		}

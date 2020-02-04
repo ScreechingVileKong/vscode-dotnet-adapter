@@ -4,7 +4,8 @@ import { Log } from 'vscode-test-adapter-util';
 import * as fs from 'fs';
 
 import { ConfigManager } from "./configManager";
-import { plural } from './utilities';
+import ProcessPool from './ProcessPool';
+import OutputManager, { Loaded } from './OutputManager';
 
 export class TestDiscovery {
 	private readonly configManager: ConfigManager;
@@ -14,13 +15,7 @@ export class TestDiscovery {
 
 	private Loadingtest: Command | undefined;
 
-	private loadStatus = {
-		loaded: 0,
-		added: 0,
-		addedFromCache: 0,
-		updatedFromFile: 0,
-		addedFromFile: 0,
-	};
+	private loadStatus: Loaded;
 
     private SuitesInfo: DerivitecTestSuiteInfo = {
 		type: 'suite',
@@ -34,10 +29,11 @@ export class TestDiscovery {
 
     constructor(
         private readonly workspace: vscode.WorkspaceFolder,
-        private readonly outputchannel: vscode.OutputChannel,
+        private readonly output: OutputManager,
 		private readonly log: Log,
 	){
 		this.configManager = new ConfigManager(this.workspace, this.log);
+		this.loadStatus = this.output.loaded;
     }
 
     public GetNode(id: string): DerivitecSuiteContext | DerivitecTestContext {
@@ -59,7 +55,23 @@ export class TestDiscovery {
 
 		const searchPatterns = this.configManager.get('searchpatterns');
 
-		for (const searchPattern of searchPatterns) {
+		const searchPatternConcat = `{${searchPatterns.join(',')}}`;
+
+		this.output.update('Searching for tests');
+		const files = await this.LoadFiles(searchPatternConcat);
+		this.loadStatus.loaded += files.length;
+		for (const file of files) {
+			try {
+				this.log.info(`file: ${file} (loading)`);
+				await this.SetTestSuiteInfo(file);
+				this.log.info(`file: ${file} (load complete)`);
+			} catch (e) {
+				this.log.error(e);
+				throw e;
+			}
+		};
+
+		/* for (const searchPattern of searchPatterns) {
 			this.UpdateOutput(`Searching for files with "${searchPattern}"`);
 			const files = await this.LoadFiles(searchPattern);
 			this.loadStatus.loaded += files.length;
@@ -73,7 +85,7 @@ export class TestDiscovery {
 					throw e;
 				}
 			};
-		}
+		} */
 
 		// Create watchers
 		this.watchers = searchPatterns.map(pattern => this.setupWatcher(pattern));
@@ -85,7 +97,19 @@ export class TestDiscovery {
 			throw errorMsg;
 		}
 
-		this.UpdateOutput('Loading tests complete');
+		/* const suites = new ProcessPool(Array.from(this.NodeById).map(([key, val]) => val), 300000);
+		await suites.try(async (file) => {
+			let symbols;
+			if (file.node.type === 'suite') {
+				symbols = await vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', file.node.sourceDll) as vscode.SymbolInformation[];
+			} else if (file.node.type = 'test') {
+				symbols = await vscode.commands.executeCommand('vscode.executeWorkspaceSymbolProvider', file.node.label) as vscode.SymbolInformation[];
+			}
+			if (!symbols || symbols.length === 0) throw 'No symbols found';
+			return symbols;
+		}) */
+
+		this.output.update('Loading tests complete', true);
 
 		this.log.info('Loading tests (complete)');
 		return this.SuitesInfo;
@@ -102,15 +126,14 @@ export class TestDiscovery {
 		// global pattern for createFileSystemWatcher
 		// const globr = path.resolve(this.workspace.uri.fsPath, searchpattern!);
 		// relative pattern for findFiles
-		this.outputchannel.append("\n");
-		const intervalId = setInterval(() => this.outputchannel.append('.'), 1000);
+		const stopLoader = this.output.loader();
 		const findGlob = new vscode.RelativePattern(this.workspace.uri.fsPath, searchpattern);
 		const skipGlob = this.configManager.get('skippattern');
 		let files: string[] = [];
 		for (const file of await vscode.workspace.findFiles(findGlob, skipGlob)) {
 			files.push(file.fsPath);
 		}
-		clearInterval(intervalId);
+		stopLoader();
 		// if (this.WSWatcher != undefined)
 		// 	this.WSWatcher.dispose();
 		// this.WSWatcher = vscode.workspace.createFileSystemWatcher(globr);
@@ -146,7 +169,7 @@ export class TestDiscovery {
 		];
 		this.log.debug(`execute: dotnet ${args.join(' ')} (starting)`);
 		this.Loadingtest = new Command('dotnet', args, { cwd: this.workspace.uri.fsPath});
-		this.Loadingtest.onData(data => this.outputchannel.append(data.toString()));
+		this.Loadingtest.onData(data => this.output.update(data.toString()));
 		try {
 			const code = await this.Loadingtest.exitCode;
 			this.log.debug(`execute: dotnet ${args.join(' ')} (complete)`);
@@ -248,23 +271,12 @@ export class TestDiscovery {
 			this.resetLoadStatus();
 			this.loadStatus.loaded += 1;
 			await this.SetTestSuiteInfo(uri.fsPath);
-			this.UpdateOutput(`New tests added from ${uri.fsPath.replace(this.workspace.uri.fsPath, '')}`);
+			this.output.update(`New tests added from ${uri.fsPath.replace(this.workspace.uri.fsPath, '')}`, true);
 		}
 		watcher.onDidChange(add);
 		watcher.onDidCreate(add);
 		watcher.onDidDelete((uri) => this.ResetSuites(uri.fsPath));
 		return watcher;
-	}
-
-	private UpdateOutput(status?: string) {
-		const { loaded, added, addedFromCache, addedFromFile, updatedFromFile } = this.loadStatus;
-		this.outputchannel.clear();
-		if (status) this.outputchannel.appendLine(`[${new Date().toISOString()}] ${status} \n`);
-		this.outputchannel.appendLine(`Loaded ${loaded} test file${plural(loaded)}`);
-		this.outputchannel.appendLine(`Added ${added} test${plural(added)} to the test suite`);
-		this.outputchannel.appendLine(`    ${addedFromFile} new test file${plural(addedFromFile)}`);
-		this.outputchannel.appendLine(`    ${addedFromCache} cached test file${plural(addedFromCache)}`);
-		this.outputchannel.appendLine(`    ${updatedFromFile} test file${plural(updatedFromFile)} updated since last cache`);
 	}
 
 	private resetLoadStatus() {

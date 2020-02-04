@@ -17,6 +17,7 @@ import { TestDiscovery } from './testDiscovery';
 import Command from './Command';
 import { getUid } from './utilities';
 import { ConfigManager } from './configManager';
+import TestExplorer from './TestExplorer';
 
 
 export class TestRunner {
@@ -29,18 +30,17 @@ export class TestRunner {
 		private readonly outputchannel: vscode.OutputChannel,
 		private readonly log: Log,
         private readonly testDiscovery: TestDiscovery,
-        private readonly testStatesEmitter: vscode.EventEmitter<TestRunStartedEvent |
-	    TestRunFinishedEvent | TestSuiteEvent | TestEvent>
+        private readonly testExplorer: TestExplorer,
 	) {
 		this.configManager = new ConfigManager(this.workspace, this.log);
 	}
 
-    public async Run(tests: string[]): Promise<void> {
-        this.InnerRun(tests, false);
+    public Run(tests: string[]): Promise<void> {
+        return this.InnerRun(tests, false);
     }
 
-    public async Debug(tests: string[]): Promise<void> {
-        this.InnerRun(tests, true);
+    public Debug(tests: string[]): Promise<void> {
+        return this.InnerRun(tests, true);
     }
 
     public Cancel(): void {
@@ -122,7 +122,7 @@ export class TestRunner {
 			type: 'suite', suite: node.id, state: 'completed'
 		}
 
-		this.testStatesEmitter.fire(<TestSuiteEvent>nodeContext.event);
+		this.testExplorer.updateState(nodeContext.event);
     }
 
     private TriggerRunningEvents(node: DerivitecTestSuiteInfo | DerivitecTestInfo) {
@@ -132,7 +132,7 @@ export class TestRunner {
 			nodeContext.event = {
 				type: 'suite', suite: node.id, state: 'running'
 			}
-			this.testStatesEmitter.fire(<TestSuiteEvent>nodeContext.event);
+			this.testExplorer.updateState(nodeContext.event);
 			for (let child of node.children)
 				this.TriggerRunningEvents(child as (DerivitecTestSuiteInfo | DerivitecTestInfo));
 
@@ -140,7 +140,7 @@ export class TestRunner {
 			nodeContext.event = {
 				type: 'test', test: node.id, state: 'running'
 			}
-			this.testStatesEmitter.fire(<TestEvent>nodeContext.event);
+			this.testExplorer.updateState(nodeContext.event);
 		}
 	}
 
@@ -186,9 +186,12 @@ export class TestRunner {
 						}
 						break;
 					default:
+						this.log.error(`Unknown state encountered where test result outcome was: ${result.outcome}`);
 						break;
 				}
-				this.testStatesEmitter.fire(<TestEvent>testContext.event);
+				if (testContext.event) {
+					this.testExplorer.updateState(testContext.event);
+				}
 			}
 		}
 	}
