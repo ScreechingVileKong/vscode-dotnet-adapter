@@ -1,18 +1,10 @@
 import * as vscode from 'vscode';
 
-// vscode-test-adapter imports
-import {
-	TestRunStartedEvent,
-	TestRunFinishedEvent,
-	TestSuiteEvent,
-	TestEvent
-} from 'vscode-test-adapter-api';
-
 import { Log } from 'vscode-test-adapter-util';
 
 import { DebugController } from "./debugController"
 
-import { TestResultsFile } from "./testResultsFile";
+import { parseTestResults } from "./testResultsFile";
 import { TestDiscovery } from './testDiscovery';
 import Command from './Command';
 import { getUid } from './utilities';
@@ -75,7 +67,7 @@ export class TestRunner {
 	private async RunTest(node: DerivitecTestSuiteInfo | DerivitecTestInfo, isDebug: boolean): Promise<void> {
 		const debugController = new DebugController(this.workspace, this.Runningtest, this.log);
 
-		const testOutputFile = `${getUid()}.trx`;
+		const testOutputFile = `${node.sourceDll}${getUid()}.trx`;
 
 		const envVars = this.configManager.get('runEnvVars');
 		const args: string[] = [];
@@ -146,8 +138,7 @@ export class TestRunner {
 
 
 	private async ParseTestResults(node: DerivitecTestSuiteInfo | DerivitecTestInfo, testOutputFile: string): Promise<void> {
-		const testResultConverter = new TestResultsFile();
-		const results = await testResultConverter.parseResults(testOutputFile);
+		const results = await parseTestResults(testOutputFile);
 		const testContexts = this.GetTestsFromNode(node);
 		const testContextsMap = new Map(testContexts.map(i => [i.node.id, i]));
 		for(const result of results) {

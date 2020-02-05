@@ -4,7 +4,6 @@ import { Log } from 'vscode-test-adapter-util';
 import * as fs from 'fs';
 
 import { ConfigManager } from "./configManager";
-import ProcessPool from './ProcessPool';
 import OutputManager, { Loaded } from './OutputManager';
 
 export class TestDiscovery {

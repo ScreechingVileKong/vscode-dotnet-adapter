@@ -84,6 +84,7 @@ export class DotnetAdapter implements TestAdapter {
 		try {
 			const suite = await this.testDiscovery.Load();
 			finish.pass(suite);
+			if (this.codeLensProcessor) this.codeLensProcessor.dispose();
 			this.codeLensProcessor = new CodeLensProcessor(this.outputManager, this.testExplorer, suite);
 		} catch (error) {
 			finish.fail(error);
