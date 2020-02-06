@@ -79,7 +79,7 @@ export class DotnetAdapter implements TestAdapter {
 	}
 
 	async load(): Promise<void> {
-		const finish = this.testExplorer.load();
+		const finish = await this.testExplorer.load();
 
 		try {
 			const suite = await this.testDiscovery.Load();
@@ -90,7 +90,7 @@ export class DotnetAdapter implements TestAdapter {
 	}
 
 	async run(tests: string[]): Promise<void> {
-		const finish = this.testExplorer.run(tests);
+		const finish = await this.testExplorer.run(tests);
 		await this.testRunner.Run(tests);
 		finish();
 	}

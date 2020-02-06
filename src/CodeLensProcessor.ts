@@ -68,7 +68,7 @@ export default class CodeLensProcessor {
         });
     }
 
-    private async process() {
+    private async process(suite: DerivitecTestSuiteInfo) {
         if (!this.ready) {
             this.deferredSuite = suite;
             return;
@@ -77,8 +77,8 @@ export default class CodeLensProcessor {
         const stopLoader = this.output.loader();
         const finish = this.testExplorer.load();
         try {
-            await Promise.all(this.suite.children.map(this.processItem.bind(this)));
-            finish.pass(this.suite);
+            await Promise.all(suite.children.map(this.processItem.bind(this)));
+            finish.pass(suite);
             stopLoader();
             this.output.update('CodeLens symbols updated');
         } catch (e) {

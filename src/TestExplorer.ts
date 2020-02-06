@@ -1,9 +1,15 @@
 import * as vscode from 'vscode';
 import { TestLoadStartedEvent, TestLoadFinishedEvent, TestRunStartedEvent, TestRunFinishedEvent } from 'vscode-test-adapter-api';
 
+type PromiseResolver = (value?: void | PromiseLike<void> | undefined) => void;
+
+type PromiseRejecter = (reason?: any) => void;
+
 type CompletionHandle<T> = (data: T) => void;
 
 type CompletionHandleWithFailure<T, P> = { pass: CompletionHandle<T>, fail: CompletionHandle<P> };
+
+enum OP_TYPE { LOAD, RUN };
 
 export default class TestExplorer {
     private disposables: { dispose(): void }[] = [];
@@ -15,6 +21,10 @@ export default class TestExplorer {
         TestRunFinishedEvent | TestSuiteEvent | TestEvent>();
 
     private readonly autorunEmitter = new vscode.EventEmitter<void>();
+
+    private inProgress: Promise<void> = Promise.resolve();
+
+    private killswitches: PromiseRejecter[] = [];
 
     constructor() {
         this.disposables.push(this.testsEmitter);
@@ -33,18 +43,26 @@ export default class TestExplorer {
 		return this.autorunEmitter.event;
     }
 
-    load(): CompletionHandleWithFailure<DerivitecTestSuiteInfo, string> {
+    async load(): Promise<CompletionHandleWithFailure<DerivitecTestSuiteInfo, string>> {
+        const release = await this.acquireSlot(OP_TYPE.LOAD);
         this.testsEmitter.fire(<TestLoadStartedEvent>{ type: 'started' });
-        const finish = (data: TestLoadFinishedEvent) => this.testsEmitter.fire(data);
+        const finish = (data: TestLoadFinishedEvent) => {
+            this.testsEmitter.fire(data);
+            release();
+        }
         return {
             pass: (suite: DerivitecTestSuiteInfo) => finish({ type: 'finished', suite }),
             fail: (errorMessage: string) => finish({ type: 'finished', errorMessage })
         };
     }
 
-    run(tests: string[]): CompletionHandle<void> {
+    async run(tests: string[]): Promise<CompletionHandle<void>> {
+        const release = await this.acquireSlot(OP_TYPE.RUN);
         this.testStatesEmitter.fire(<TestRunStartedEvent>{ type: 'started', tests });
-		return () => this.testStatesEmitter.fire(<TestRunFinishedEvent>{ type: 'finished' });
+		return () => {
+            this.testStatesEmitter.fire(<TestRunFinishedEvent>{ type: 'finished' });
+            release();
+        }
     }
 
     updateState<T extends TestSuiteEvent | TestEvent>(event: T) {
@@ -52,9 +70,21 @@ export default class TestExplorer {
     }
 
     dispose(): void {
-		for (const disposable of this.disposables) {
-			disposable.dispose();
-		}
+        this.disposables.forEach(disposable => disposable.dispose());
+        this.killswitches.forEach(killswitch => killswitch('Disposing TestExplorer'));
+
 		this.disposables = [];
-	}
+    }
+
+    private async acquireSlot(op: OP_TYPE) {
+        await this.inProgress;
+        let resolve!: PromiseResolver;
+        let reject!: PromiseRejecter;
+        this.inProgress = new Promise((res, rej) => {
+            resolve = res;
+            reject = rej;
+        });
+        this.killswitches[op] = reject;
+        return resolve;
+    }
 }
