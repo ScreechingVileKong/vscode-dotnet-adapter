@@ -84,8 +84,6 @@ export class DotnetAdapter implements TestAdapter {
 		try {
 			const suite = await this.testDiscovery.Load();
 			finish.pass(suite);
-			if (this.codeLensProcessor) this.codeLensProcessor.dispose();
-			this.codeLensProcessor = new CodeLensProcessor(this.outputManager, this.testExplorer, suite);
 		} catch (error) {
 			finish.fail(error);
 		}
@@ -109,7 +107,6 @@ export class DotnetAdapter implements TestAdapter {
 
 	dispose(): void {
 		this.testRunner.Cancel();
-		if (this.codeLensProcessor) this.codeLensProcessor.dispose();
 		for (const disposable of this.disposables) {
 			disposable.dispose();
 		}

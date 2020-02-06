@@ -5,16 +5,23 @@ import TestExplorer from './TestExplorer';
 const getOmnisharp = () => vscode.extensions.getExtension('ms-vscode.csharp');
 
 export default class CodeLensProcessor {
+    public ready = false;
+
     private cancel = false;
+
+    private deferredSuite?: DerivitecTestSuiteInfo;
 
     constructor(
         private output: OutputManager,
         private testExplorer: TestExplorer,
-        private suite: DerivitecTestSuiteInfo,
     ) {
-        const process = this.process.bind(this);
         const handleError = this.handleError.bind(this);
-        this.monitorOmnisharpInitialisation().then(process).catch(handleError);
+        this.monitorOmnisharpInitialisation().then(() => {
+            this.ready = true;
+            const suite = this.deferredSuite;
+            this.deferredSuite = undefined;
+            if (suite) this.process(suite);
+        }).catch(handleError);
     }
 
     private async monitorOmnisharpInitialisation() {
@@ -62,6 +69,10 @@ export default class CodeLensProcessor {
     }
 
     private async process() {
+        if (!this.ready) {
+            this.deferredSuite = suite;
+            return;
+        }
         this.output.update('Processing CodeLens data');
         const stopLoader = this.output.loader();
         const finish = this.testExplorer.load();

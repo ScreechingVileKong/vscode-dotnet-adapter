@@ -180,7 +180,7 @@ export class TestDiscovery {
 		} catch (err) {
 			this.log.error(`child process exited with error ${err}`);
 			this.SuitesInfo.children.length = 0;
-			if (this.Loadingtest) this.Loadingtest.childProcess.removeAllListeners();
+			if (this.Loadingtest) this.Loadingtest.dispose();
 			this.Loadingtest = undefined;
 		}
     }
