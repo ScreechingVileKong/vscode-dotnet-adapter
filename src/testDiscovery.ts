@@ -5,6 +5,8 @@ import * as fs from 'fs';
 
 import { ConfigManager } from "./configManager";
 import OutputManager, { Loaded } from './OutputManager';
+import CodeLensProcessor from './CodeLensProcessor';
+import TestExplorer from './TestExplorer';
 
 export class TestDiscovery {
 	private readonly configManager: ConfigManager;
@@ -28,7 +30,9 @@ export class TestDiscovery {
 
     constructor(
         private readonly workspace: vscode.WorkspaceFolder,
-        private readonly output: OutputManager,
+		private readonly output: OutputManager,
+		private readonly codeLens: CodeLensProcessor,
+		private readonly testExplorer: TestExplorer,
 		private readonly log: Log,
 	){
 		this.configManager = new ConfigManager(this.workspace, this.log);
@@ -107,6 +111,9 @@ export class TestDiscovery {
 			if (!symbols || symbols.length === 0) throw 'No symbols found';
 			return symbols;
 		}) */
+
+		// Send to CodeLensProcessor; Do NOT wait for it as it'll cause a deadlock
+		this.codeLens.process(this.SuitesInfo);
 
 		this.output.update('Loading tests complete', true);
 
@@ -267,10 +274,18 @@ export class TestDiscovery {
 		const watcher = vscode.workspace.createFileSystemWatcher(searchPattern);
 		const add = async (uri: vscode.Uri) => {
 			if (typeof this.Loadingtest !== 'undefined') await this.Loadingtest.exitCode;
-			this.resetLoadStatus();
+			const finish = await this.testExplorer.load();
+			this.output.resetLoaded()
 			this.loadStatus.loaded += 1;
-			await this.SetTestSuiteInfo(uri.fsPath);
-			this.output.update(`New tests added from ${uri.fsPath.replace(this.workspace.uri.fsPath, '')}`, true);
+			try {
+				await this.SetTestSuiteInfo(uri.fsPath);
+				// Send to CodeLensProcessor; Do NOT wait for it as it'll cause a deadlock
+				this.codeLens.process(this.SuitesInfo);
+				this.output.update(`New tests added from ${uri.fsPath.replace(this.workspace.uri.fsPath, '')}`, true);
+				finish.pass(this.SuitesInfo);
+			} catch (e) {
+				finish.fail(e);
+			}
 		}
 		watcher.onDidChange(add);
 		watcher.onDidCreate(add);
@@ -278,9 +293,8 @@ export class TestDiscovery {
 		return watcher;
 	}
 
-	private resetLoadStatus() {
-		// Reset output numbers
-		Object.keys(this.loadStatus).forEach((key) => Object.assign(this.loadStatus, { [key]: 0 }));
+	public dispose() {
+		if (typeof this.Loadingtest !== 'undefined') this.Loadingtest.dispose();
 	}
 
 }

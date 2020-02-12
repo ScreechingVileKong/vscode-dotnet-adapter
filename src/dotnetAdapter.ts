@@ -49,9 +49,16 @@ export class DotnetAdapter implements TestAdapter {
 			this.outputchannel,
 		);
 
+		this.codeLensProcessor = new CodeLensProcessor(
+			this.outputManager,
+			this.testExplorer,
+		);
+
 		this.testDiscovery = new TestDiscovery(
 			this.workspace,
 			this.outputManager,
+			this.codeLensProcessor,
+			this.testExplorer,
 			this.log
 		);
 
@@ -64,6 +71,7 @@ export class DotnetAdapter implements TestAdapter {
 		);
 
 		this.disposables.push(this.testExplorer);
+		this.disposables.push(this.codeLensProcessor);
 		this.disposables.push(
 			vscode.workspace.onDidChangeConfiguration(configChange => {
 
@@ -96,7 +104,7 @@ export class DotnetAdapter implements TestAdapter {
 	}
 
 	async debug(tests: string[]): Promise<void> {
-		const finish = this.testExplorer.run(tests);
+		const finish = await this.testExplorer.run(tests);
 		await this.testRunner.Debug(tests);
 		finish();
 	}

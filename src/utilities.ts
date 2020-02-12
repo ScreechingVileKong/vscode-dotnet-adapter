@@ -10,7 +10,15 @@ const createConfigItem = <T>({ default: defaultVal, ...optional }: Partial<Confi
     ...optional
 }) as ConfigEntry<T>;
 
-const plural = (count: number) => count !== 1 ? 's' : '';
+const plurals = {
+    '': 's',
+    'is': 'are',
+};
+const plural = (count: number, word: keyof typeof plurals = '') => {
+    const shouldPlural = count !== 1;
+    if (word in plurals) return shouldPlural ? plurals[word] : word;
+    return shouldPlural ? `${word}s` : word;
+};
 
 const objToListSentence = (obj: { [key: string]: number }, ignoreZeros = true) => {
     let str = '';

@@ -68,14 +68,15 @@ export default class CodeLensProcessor {
         });
     }
 
-    private async process(suite: DerivitecTestSuiteInfo) {
+    async process(suite: DerivitecTestSuiteInfo) {
+        const finish = await this.testExplorer.load();
         if (!this.ready) {
             this.deferredSuite = suite;
+            finish.pass(suite);
             return;
         }
         this.output.update('Processing CodeLens data');
         const stopLoader = this.output.loader();
-        const finish = this.testExplorer.load();
         try {
             await Promise.all(suite.children.map(this.processItem.bind(this)));
             finish.pass(suite);
