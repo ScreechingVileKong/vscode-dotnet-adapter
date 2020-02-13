@@ -5,12 +5,13 @@ import { Log } from 'vscode-test-adapter-util';
 import { DebugController } from "./debugController"
 
 import { parseTestResults } from "./testResultsFile";
-import { TestDiscovery } from './testDiscovery';
 import Command from './Command';
 import { getUid } from './utilities';
 import { ConfigManager } from './configManager';
 import TestExplorer from './TestExplorer';
+import OutputManager from './OutputManager';
 
+const getMethodName = (fullName: string) => fullName.substr(fullName.lastIndexOf('.') + 1);
 
 export class TestRunner {
 	private readonly configManager: ConfigManager;
@@ -18,10 +19,10 @@ export class TestRunner {
 	private Runningtest: Command | undefined;
 
     constructor(
-        private readonly workspace: vscode.WorkspaceFolder,
-		private readonly outputchannel: vscode.OutputChannel,
+		private readonly workspace: vscode.WorkspaceFolder,
+		private readonly nodeMap: Map<string, DerivitecSuiteContext | DerivitecTestContext>,
+		private readonly output: OutputManager,
 		private readonly log: Log,
-        private readonly testDiscovery: TestDiscovery,
         private readonly testExplorer: TestExplorer,
 	) {
 		this.configManager = new ConfigManager(this.workspace, this.log);
@@ -38,7 +39,7 @@ export class TestRunner {
     public Cancel(): void {
         //kill the child process for the current test run (if there is any)
 		if (this.Runningtest) {
-			this.Runningtest.childProcess.kill();
+			this.Runningtest.dispose();
 			this.Runningtest = undefined;
 		}
     }
@@ -49,14 +50,16 @@ export class TestRunner {
             this.log.info(`Running tests ${JSON.stringify(tests)}`);
 
             if (tests[0] == 'root') {
-                let nodeContext = this.testDiscovery.GetNode(tests[0]) as DerivitecSuiteContext;
+                let nodeContext = this.nodeMap.get(tests[0]) as DerivitecSuiteContext;
                 tests = nodeContext?.node.children.map(i => i.id);
             }
 
             for (const id of tests) {
-                let nodeContext = this.testDiscovery.GetNode(id);
+                let nodeContext = this.nodeMap.get(id);
                 if (nodeContext) {
-                    await this.RunTest(nodeContext.node, isDebug);
+					this.output.update(`${nodeContext.node.id} ${nodeContext.node.type} started`);
+					await this.RunTest(nodeContext.node, isDebug);
+					this.output.update(`${nodeContext.node.id} ${nodeContext.node.type} complete`);
                 }
             }
         } catch (error) {
@@ -78,6 +81,7 @@ export class TestRunner {
 		args.push('--Parallel');
 		args.push(`--logger:trx;LogFileName=${testOutputFile}`);
 		this.TriggerRunningEvents(node);
+		const { print, finish } = this.output.getTestOutputHandler(node.type === 'test' ? getMethodName(node.id) : node.id);
 		this.Runningtest = new Command(
 			'dotnet',
 			args,
@@ -93,13 +97,14 @@ export class TestRunner {
 			if (isDebug) {
 				await debugController.onData(data);
 			}
-			this.outputchannel.append(data.toString());
+			print(data.toString());
 		});
 		this.Runningtest.onStdErr(data => {
-			this.outputchannel.append(data.toString());
+			print(data.toString());
 		});
 		await this.Runningtest.exitCode;
 		this.Runningtest = undefined;
+		finish();
 		await this.ParseTestResults(node, testOutputFile);
 		this.MarkSuiteComplete(node);
 	}
@@ -108,7 +113,7 @@ export class TestRunner {
 		if(node.type == 'test') return;
 		for (let child of node.children)
 			this.MarkSuiteComplete(child as (DerivitecTestSuiteInfo | DerivitecTestInfo));
-		const nodeContext = this.testDiscovery.GetNode(node.id) as DerivitecSuiteContext;
+		const nodeContext = this.nodeMap.get(node.id) as DerivitecSuiteContext;
 		if (!nodeContext) return;
 		nodeContext.event = {
 			type: 'suite', suite: node.id, state: 'completed'
@@ -118,7 +123,7 @@ export class TestRunner {
     }
 
     private TriggerRunningEvents(node: DerivitecTestSuiteInfo | DerivitecTestInfo) {
-		const nodeContext = this.testDiscovery.GetNode(node.id);
+		const nodeContext = this.nodeMap.get(node.id);
 		if (!nodeContext) return;
 		if (node.type == 'suite') {
 			nodeContext.event = {
@@ -181,6 +186,7 @@ export class TestRunner {
 						break;
 				}
 				if (testContext.event) {
+					this.output.update(`${getMethodName(result.fullName)} test ${testContext.event.state}`);
 					this.testExplorer.updateState(testContext.event);
 				}
 			}
@@ -196,7 +202,7 @@ export class TestRunner {
 				}
 			}
 		} else {
-			const context = this.testDiscovery.GetNode(node.id);
+			const context = this.nodeMap.get(node.id);
 			testContexts.push(context as DerivitecTestContext);
 		}
 		return testContexts;

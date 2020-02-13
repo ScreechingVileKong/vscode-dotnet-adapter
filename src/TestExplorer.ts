@@ -1,18 +1,15 @@
 import * as vscode from 'vscode';
 import { TestLoadStartedEvent, TestLoadFinishedEvent, TestRunStartedEvent, TestRunFinishedEvent } from 'vscode-test-adapter-api';
 import { plural } from './utilities';
+import QueueManager from './QueueManager';
 
-type PromiseResolver = (value?: void | PromiseLike<void> | undefined) => void;
 
-type PromiseRejecter = (reason?: any) => void;
 
 type CompletionHandle<T> = (data: T) => void;
 
 type CompletionHandleWithFailure<T, P> = { pass: CompletionHandle<T>, fail: CompletionHandle<P> };
 
-const opCount = 2;
 enum OP_TYPE { LOAD, RUN };
-
 const opPriority = [OP_TYPE.RUN, OP_TYPE.LOAD];
 
 type LoadState = 'none' | 'started' | 'finished';
@@ -28,20 +25,21 @@ export default class TestExplorer {
 
     private readonly autorunEmitter = new vscode.EventEmitter<void>();
 
-    private jobQueues: Slot[][] = Array(opCount).fill(null).map(() => []);
-
-    //private jobs = 0;
-
-    private currentJob?: Slot;
+    private readonly queueManager = new QueueManager<OP_TYPE>(opPriority);
 
     private loadState: LoadState = 'none';
 
-    private killswitches: PromiseRejecter[] = [];
+    private runPool: Set<string> = new Set();
 
-    constructor() {
-        this.disposables.push(this.testsEmitter);
-		this.disposables.push(this.testStatesEmitter);
-		this.disposables.push(this.autorunEmitter);
+    constructor(
+        private readonly nodeMap: Map<string, DerivitecSuiteContext | DerivitecTestContext>
+    ) {
+        this.disposables.push(
+            this.testsEmitter,
+            this.testStatesEmitter,
+            this.autorunEmitter,
+            this.queueManager,
+        );
     }
 
 	get tests(): vscode.Event<TestLoadStartedEvent | TestLoadFinishedEvent> {
@@ -55,15 +53,9 @@ export default class TestExplorer {
 		return this.autorunEmitter.event;
     }
 
-    get jobs() {
-        const inQueue = this.jobQueues.reduce((acc, queue) => acc + queue.length, 0);
-        const inProgress = this.currentJob instanceof Slot;
-        return inProgress ? inQueue + 1 : inQueue;
-    }
-
     get testsRunning() {
-        const testsWaiting = this.jobQueues[OP_TYPE.RUN].length;
-        const testRunning = this.currentJob && this.currentJob.type === OP_TYPE.RUN;
+        const testsWaiting = this.queueManager.count[OP_TYPE.RUN];
+        const testRunning = this.queueManager.currentJob && this.queueManager.currentJob.type === OP_TYPE.RUN;
         return testsWaiting + (testRunning ? 1 : 0);
     }
 
@@ -73,13 +65,12 @@ export default class TestExplorer {
             throw 'Tests are running; Cannot refresh test suites';
         }
         if (userInitiated) {
-            this.jobQueues[OP_TYPE.LOAD].forEach(job => job.cancel());
-            this.jobQueues[OP_TYPE.LOAD].length = 0;
-            if (typeof this.currentJob !== 'undefined') {
+            this.queueManager.retractSlots(OP_TYPE.LOAD);
+            if (this.queueManager.isRunning) {
                 vscode.window.showInformationMessage('Test suites will be refreshed when the current operation has completed.');
             }
         }
-        const release = await this.acquireSlot(OP_TYPE.LOAD);
+        const release = await this.queueManager.acquireSlot(OP_TYPE.LOAD);
         this.loadState = 'started';
         this.testsEmitter.fire(<TestLoadStartedEvent>{ type: this.loadState });
         const finish = (data: TestLoadFinishedEvent) => {
@@ -96,13 +87,33 @@ export default class TestExplorer {
     async run(tests: string[]): Promise<CompletionHandle<void>> {
         // Fire the event immediately to keep UI responsive
         this.testStatesEmitter.fire(<TestRunStartedEvent>{ type: 'started', tests });
-        const release = await this.acquireSlot(OP_TYPE.RUN);
+        // Add tests to the run pool to allow proper cancellation handling later
+        tests.forEach(test => this.runPool.add(test));
+        const release = await this.queueManager.acquireSlot(OP_TYPE.RUN);
 		return () => {
-            if (this.jobQueues[OP_TYPE.RUN].length === 0) {
+            // Remove tests from the run pool
+            tests.forEach(test => this.runPool.delete(test));
+            if (this.queueManager.count[OP_TYPE.RUN] === 0) {
                 this.testStatesEmitter.fire(<TestRunFinishedEvent>{ type: 'finished' });
             }
             release();
         }
+    }
+
+    cancelAllRuns() {
+        this.queueManager.retractSlots(OP_TYPE.RUN);
+        this.runPool.forEach(test => {
+            const node = this.nodeMap.get(test);
+            if (!node) return;
+            const { type } = node.node;
+            if (type === 'suite') {
+                this.updateState({ type: 'suite', suite: test, state: 'completed' });
+            } else if (type === 'test') {
+                this.updateState({ type: 'test', test, state: 'skipped' });
+            }
+        });
+        this.runPool.clear();
+        this.testStatesEmitter.fire(<TestRunFinishedEvent>{ type: 'finished' });
     }
 
     updateState<T extends TestSuiteEvent | TestEvent>(event: T) {
@@ -111,20 +122,6 @@ export default class TestExplorer {
 
     dispose(): void {
         this.disposables.forEach(disposable => disposable.dispose());
-        this.killswitches.forEach(killswitch => killswitch('Disposing TestExplorer'));
-
 		this.disposables = [];
-    }
-
-    private async acquireSlot(op: OP_TYPE) {
-        await this.inProgress;
-        let resolve!: PromiseResolver;
-        let reject!: PromiseRejecter;
-        this.inProgress = new Promise((res, rej) => {
-            resolve = res;
-            reject = rej;
-        });
-        this.killswitches[op] = reject;
-        return resolve;
     }
 }

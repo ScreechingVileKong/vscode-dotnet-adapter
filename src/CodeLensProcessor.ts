@@ -69,7 +69,7 @@ export default class CodeLensProcessor {
     }
 
     async process(suite: DerivitecTestSuiteInfo) {
-        const finish = await this.testExplorer.load();
+        const finish = await this.testExplorer.load(false);
         if (!this.ready) {
             this.deferredSuite = suite;
             finish.pass(suite);

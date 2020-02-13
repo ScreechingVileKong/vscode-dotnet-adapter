@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { plural, objToListSentence } from './utilities';
+import { plural, objToListSentence, getDate } from './utilities';
 
 const loadedDefault = () => ({
     loaded: 0,
@@ -18,9 +18,11 @@ export default class OutputManager {
 
     private log: string[] = [];
 
-    constructor(
-        private readonly outputchannel: vscode.OutputChannel,
-    ) {
+    private readonly summaryChannel = vscode.window.createOutputChannel('.Net Core Test Summary');
+
+    private readonly outputChannel = vscode.window.createOutputChannel('.Net Core Test Output');
+
+    constructor() {
         this.refresh();
     }
 
@@ -40,10 +42,10 @@ export default class OutputManager {
     update(status?: string, summarise: boolean = false) {
         let logItem;
         if (status) {
-            logItem = `[${new Date().toISOString()}] ${status}`;
+            logItem = `[${getDate()}] ${status}`;
             if (summarise) logItem += ` ${this.summarise()}`;
             this.log.push(logItem);
-            if (this.canAppend) return this.outputchannel.appendLine(logItem);
+            if (this.canAppend) return this.summaryChannel.appendLine(logItem);
         }
         if (!this.canAppend) this.refresh();
         this.canAppend = true;
@@ -51,9 +53,8 @@ export default class OutputManager {
 
     refresh() {
         const { loaded, added, addedFromCache, addedFromFile, updatedFromFile } = this.internalLoaded;
-        this.outputchannel.clear();
-        this.outputchannel.appendLine(`
-Loaded ${loaded} test file${plural(loaded)}
+        this.summaryChannel.clear();
+        this.summaryChannel.appendLine(`Loaded ${loaded} test file${plural(loaded)}
 Added ${added} test${plural(added)} to the test suite
     ${addedFromFile} new test file${plural(addedFromFile)}
     ${addedFromCache} cached test file${plural(addedFromCache)}
@@ -69,15 +70,38 @@ ${this.log.join('\n')}`);
     }
 
     loader() {
+        let initialLength = this.log.length;
+        const message = this.log[initialLength - 1];
         const uid = setInterval(() => {
+            if (this.log.length !== initialLength) {
+                // Something else has been logged, ensure it's clear what the loader is for
+                this.refresh();
+                this.summaryChannel.appendLine(`Still running -> ${message}`);
+                initialLength = this.log.length;
+            }
             this.canAppend = false;
-            this.outputchannel.append('.')
+            this.summaryChannel.append('.')
         }, 1000);
         return () => {
             clearInterval(uid);
             this.canAppend = false;
-            this.outputchannel.append('Complete.');
+            this.summaryChannel.append('Complete.');
         }
+    }
+
+    getTestOutputHandler(id: string) {
+        this.update(`${id} running`);
+        const stopLoader = this.loader();
+        this.outputChannel.show(true);
+        this.outputChannel.appendLine(`[${new Date().toISOString()}] Test output for ${id} begins...`);
+        return {
+            print: (...data: string[]) => this.outputChannel.append(data.join(' ')),
+            finish: () => {
+                this.outputChannel.appendLine(`[${getDate()}] Test output for ${id} ends...`);
+                stopLoader();
+                this.update(`${id} finished`);
+            }
+        };
     }
 
     resetLoaded() {

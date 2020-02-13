@@ -27,7 +27,8 @@ export default class Command {
     }
 
     dispose() {
-        this.childProcess.removeAllListeners();
+        this.childProcess.stdout?.removeAllListeners();
+        this.childProcess.stderr?.removeAllListeners();
         if (!this.childProcess.killed) this.childProcess.kill();
     }
 }

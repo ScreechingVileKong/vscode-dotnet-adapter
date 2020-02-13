@@ -11,9 +11,6 @@ import TestExplorer from './TestExplorer';
 export class TestDiscovery {
 	private readonly configManager: ConfigManager;
 
-    private NodeById =
-        new Map<string, DerivitecSuiteContext | DerivitecTestContext>();
-
 	private Loadingtest: Command | undefined;
 
 	private loadStatus: Loaded;
@@ -29,7 +26,8 @@ export class TestDiscovery {
 	private watchers?: vscode.FileSystemWatcher[];
 
     constructor(
-        private readonly workspace: vscode.WorkspaceFolder,
+		private readonly workspace: vscode.WorkspaceFolder,
+		private readonly nodeMap: Map<string, DerivitecSuiteContext | DerivitecTestContext>,
 		private readonly output: OutputManager,
 		private readonly codeLens: CodeLensProcessor,
 		private readonly testExplorer: TestExplorer,
@@ -40,7 +38,7 @@ export class TestDiscovery {
     }
 
     public GetNode(id: string): DerivitecSuiteContext | DerivitecTestContext {
-        const node = this.NodeById.get(id);
+        const node = this.nodeMap.get(id);
         if (!node) throw `Test node '${id}' could not be found!`
         return node;
     }
@@ -48,7 +46,7 @@ export class TestDiscovery {
     public async Load(): Promise<DerivitecTestSuiteInfo> {
 		this.log.info('Loading tests (starting)');
 
-		this.NodeById.set(this.SuitesInfo.id, {node: this.SuitesInfo});
+		this.nodeMap.set(this.SuitesInfo.id, {node: this.SuitesInfo});
 
 		await this.StopLoading();
 
@@ -74,22 +72,6 @@ export class TestDiscovery {
 			}
 		};
 
-		/* for (const searchPattern of searchPatterns) {
-			this.UpdateOutput(`Searching for files with "${searchPattern}"`);
-			const files = await this.LoadFiles(searchPattern);
-			this.loadStatus.loaded += files.length;
-			for (const file of files) {
-				try {
-					this.log.info(`file: ${file} (loading)`);
-					await this.SetTestSuiteInfo(file);
-					this.log.info(`file: ${file} (load complete)`);
-				} catch (e) {
-					this.log.error(e);
-					throw e;
-				}
-			};
-		} */
-
 		// Create watchers
 		this.watchers = searchPatterns.map(pattern => this.setupWatcher(pattern));
 
@@ -99,18 +81,6 @@ export class TestDiscovery {
 			this.log.error(errorMsg);
 			throw errorMsg;
 		}
-
-		/* const suites = new ProcessPool(Array.from(this.NodeById).map(([key, val]) => val), 300000);
-		await suites.try(async (file) => {
-			let symbols;
-			if (file.node.type === 'suite') {
-				symbols = await vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', file.node.sourceDll) as vscode.SymbolInformation[];
-			} else if (file.node.type = 'test') {
-				symbols = await vscode.commands.executeCommand('vscode.executeWorkspaceSymbolProvider', file.node.label) as vscode.SymbolInformation[];
-			}
-			if (!symbols || symbols.length === 0) throw 'No symbols found';
-			return symbols;
-		}) */
 
 		// Send to CodeLensProcessor; Do NOT wait for it as it'll cause a deadlock
 		this.codeLens.process(this.SuitesInfo);
@@ -210,7 +180,7 @@ export class TestDiscovery {
 			children: []
 		};
 		this.log.info(`adding node: ${fileNamespace}`);
-		this.NodeById.set(fileSuite.id, {node: fileSuite});
+		this.nodeMap.set(fileSuite.id, {node: fileSuite});
 		this.SuitesInfo.children.push(fileSuite);
 
 		for (const line of lines) {
@@ -225,7 +195,7 @@ export class TestDiscovery {
 			const namespace = line.replace(`.${className}.${testName}`, "");
 
 			const classId = `${namespace}.${className}`;
-			let classContext = this.NodeById.get(classId) as DerivitecSuiteContext;
+			let classContext = this.nodeMap.get(classId) as DerivitecSuiteContext;
 
 			if(!classContext)	{
 				classContext = {
@@ -237,7 +207,7 @@ export class TestDiscovery {
 						children: []
 					}
 				};
-				this.NodeById.set(classContext.node.id, classContext);
+				this.nodeMap.set(classContext.node.id, classContext);
 				fileSuite.children.push(classContext.node);
 			}
 
@@ -252,7 +222,7 @@ export class TestDiscovery {
 
 			this.loadStatus.added += 1;
 			this.log.info(`adding node: ${line}`);
-			this.NodeById.set(testInfo.id, {node: testInfo});
+			this.nodeMap.set(testInfo.id, {node: testInfo});
 			classContext.node.children.push(testInfo);
 		}
 		this.log.info(`suite creation:: ${file} (complete)`);

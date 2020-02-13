@@ -40,10 +40,13 @@ const readFileAsync = (filePath: string, options?: object) => new Promise((resol
     });
 });
 
+const getDate = () => new Date().toISOString();
+
 export {
     getUid,
     createConfigItem,
     plural,
     objToListSentence,
     readFileAsync,
+    getDate,
 }

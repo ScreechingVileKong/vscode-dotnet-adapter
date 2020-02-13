@@ -17,15 +17,17 @@ export class DotnetAdapter implements TestAdapter {
 
 	private disposables: { dispose(): void }[] = [];
 
-	private codeLensProcessor?: CodeLensProcessor;
+	private readonly nodeMap = new Map<string, DerivitecSuiteContext | DerivitecTestContext>();
 
-	private readonly outputManager: OutputManager;
+	private readonly outputManager = new OutputManager();
+
+	private readonly testExplorer = new TestExplorer(this.nodeMap);
+
+	private readonly codeLensProcessor?: CodeLensProcessor;
 
 	private readonly testDiscovery: TestDiscovery;
 
 	private readonly testRunner: TestRunner;
-
-	private readonly testExplorer = new TestExplorer();
 
 	get tests() {
 		return this.testExplorer.tests;
@@ -39,15 +41,10 @@ export class DotnetAdapter implements TestAdapter {
 
 	constructor(
 		public readonly workspace: vscode.WorkspaceFolder,
-		private readonly outputchannel: vscode.OutputChannel,
 		private readonly log: Log,
 	) {
 		this.log.info('Initializing .Net Core adapter');
 		this.log.info('');
-
-		this.outputManager = new OutputManager(
-			this.outputchannel,
-		);
 
 		this.codeLensProcessor = new CodeLensProcessor(
 			this.outputManager,
@@ -56,6 +53,7 @@ export class DotnetAdapter implements TestAdapter {
 
 		this.testDiscovery = new TestDiscovery(
 			this.workspace,
+			this.nodeMap,
 			this.outputManager,
 			this.codeLensProcessor,
 			this.testExplorer,
@@ -64,9 +62,9 @@ export class DotnetAdapter implements TestAdapter {
 
 		this.testRunner = new TestRunner(
 			this.workspace,
-			this.outputchannel,
+			this.nodeMap,
+			this.outputManager,
 			this.log,
-			this.testDiscovery,
 			this.testExplorer
 		);
 
@@ -111,6 +109,7 @@ export class DotnetAdapter implements TestAdapter {
 
 	cancel(): void {
 		this.testRunner.Cancel();
+		this.testExplorer.cancelAllRuns();
 	}
 
 	dispose(): void {
